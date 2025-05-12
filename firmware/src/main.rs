@@ -18,8 +18,6 @@ use log::info;
 use std::{thread::sleep, time::Duration};
 use wifi::wifi;
 
-//const UUID: &str = get_uuid::uuid();
-
 #[toml_cfg::toml_config]
 pub struct Config {
     #[default("localhost")]
