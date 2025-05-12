@@ -18,8 +18,6 @@ use log::info;
 use std::{thread::sleep, time::Duration};
 use wifi::wifi;
 
-const UUID: &str = get_uuid::uuid();
-
 #[toml_cfg::toml_config]
 pub struct Config {
     #[default("localhost")]
@@ -59,8 +57,10 @@ fn main() -> Result<()> {
     )?;
     info!("Successfully connected to Wi-Fi");
 
+    let uuid = get_uuid::uuid();
+
     info!("Our UUID is:");
-    info!("{}", UUID);
+    info!("{}", uuid);
 
     // Set up I2C communication for the sensor
     let sda = peripherals.pins.gpio21;
@@ -106,7 +106,7 @@ fn main() -> Result<()> {
 
         // Publish temperature data via MQTT
         client.enqueue(
-            &mqtt_messages::temperature_data_topic(UUID),
+            &mqtt_messages::temperature_data_topic(&uuid),
             QoS::AtLeastOnce,
             false,
             temp_str.as_bytes(),
