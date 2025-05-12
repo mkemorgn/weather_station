@@ -5,29 +5,44 @@ use std::{
 };
 
 pub use rgb::RGB8;
+use serde::{Deserialize, Serialize};
+
+/// Single topic for all sensor data (e.g., temperature, humidity)
+pub fn sensor_data_topic(uuid: &str) -> String {
+    format!("{}/sensor_data", uuid)
+}
 
 /// Handles `EspMqttMessage` with MQTT hierarchy
-///
 /// Can be used to send ColorData(rgb) with `Command` in a hierarchical context
 pub fn cmd_topic_fragment(uuid: &str) -> String {
     format!("{}/command/", uuid)
 }
 
 /// Handles `EspMqttMessage` without MQTT hierarchy
-///
 /// Used to send ColorData(rgb)
 pub fn color_topic(uuid: &str) -> String {
     format!("{}/color_topic", uuid)
 }
 
+/// Legacy temperature path (still supported)
 pub fn temperature_data_topic(uuid: &str) -> String {
     format!("{}/sensor_data/temperature", uuid)
 }
 
+/// Simple greeting/topic
 pub fn hello_topic(uuid: &str) -> String {
     format!("{}/hello", uuid)
 }
 
+/// A structured telemetry packet containing multiple fields
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Telemetry {
+    pub temperature: f32,
+    pub humidity: f32,
+    // extendable with pressure, battery, timestamp, etc.
+}
+
+/// A command type for board control (e.g., LEDs)
 pub enum Command {
     BoardLed(RGB8),
 }
@@ -50,7 +65,7 @@ impl Command {
     }
 }
 
-/// `ColorData` is a simplified `Command`
+/// `ColorData` is a simplified `Command` for direct LED updates
 pub enum ColorData {
     BoardLed(RGB8),
 }
@@ -66,6 +81,8 @@ impl ColorData {
         }
     }
 }
+
+/// RawCommandData carries a path and owned or borrowed payload
 #[derive(Debug)]
 pub struct RawCommandData<'a> {
     pub path: &'a str,
@@ -94,8 +111,7 @@ impl<'a> TryFrom<RawCommandData<'a>> for Command {
     type Error = ConvertError;
 
     fn try_from(value: RawCommandData) -> Result<Self, Self::Error> {
-        //if value.path == Command::BOARD_LED {
-        if value.path == "" {
+        if value.path == Command::BOARD_LED {
             let data: &[u8] = value.data.borrow();
             let data: [u8; 3] = data
                 .try_into()
@@ -108,9 +124,7 @@ impl<'a> TryFrom<RawCommandData<'a>> for Command {
     }
 }
 
-/// Handles `.data()` from EspMqttMessage
-///
-// The message is a slice containing 3 values, and is cast into a ColorData(rgb)
+/// Conversion from raw payload bytes into ColorData
 impl<'a> TryFrom<&[u8]> for ColorData {
     type Error = ConvertError;
 

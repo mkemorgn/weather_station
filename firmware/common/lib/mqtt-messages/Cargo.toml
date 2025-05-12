@@ -1,11 +1,10 @@
 [package]
 name = "mqtt-messages"
 version = "0.1.0"
-authors = [
-    "Sergio Gasquez <sergio.gasquez@gmail.com>",
-    "Tanks Transfeld <tanks.transfeld@ferrous-systems.com>",
-]
+authors = ["Michael Morgan <morgan.mike55@gmail.com>"]
 edition = "2021"
 
 [dependencies]
 rgb = "=0.8.50"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"

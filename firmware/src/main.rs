@@ -15,6 +15,8 @@ use esp_idf_svc::{
     nvs::EspNvs,
 };
 use log::info;
+use mqtt_messages::Telemetry;
+use serde_json;
 use std::{thread::sleep, time::Duration};
 use wifi::wifi;
 
@@ -96,23 +98,38 @@ fn main() -> Result<()> {
         sleep(Duration::from_secs(1));
 
         // Read temperature from the BME280 sensor
-        let temp = bme280
+        let temperature = bme280
             .measure(&mut delay)
             .map(|measurement| measurement.temperature)
             .unwrap_or_else(|_| 0.0);
 
+        let humidity = bme280
+            .measure(&mut delay)
+            .map(|measurement| measurement.humidity)
+            .unwrap_or_else(|_| 0.0);
+
+        let data = mqtt_messages::Telemetry {
+            temperature: temperature,
+            humidity: humidity,
+        };
+
+        let payload = serde_json::to_string(&data)?;
+
         // Convert Temp to a string
-        let temp_str = format!("{:.2}", temp);
+        let temp_str = format!("{:.2}", temperature);
+
+        let humidity_str = format!("{:.2}", humidity);
 
         // Publish temperature data via MQTT
         client.enqueue(
-            &mqtt_messages::temperature_data_topic(&uuid),
+            &mqtt_messages::sensor_data_topic(&uuid),
             QoS::AtLeastOnce,
             false,
-            temp_str.as_bytes(),
+            payload.as_bytes(),
         )?;
 
         // Optional: Log the temperature
         info!("Published temperature: {} °C", temp_str);
+        info!("Published humidity: {}", humidity_str);
     }
 }
