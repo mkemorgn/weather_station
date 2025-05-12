@@ -1,15 +1,14 @@
 [package]
 name = "get-uuid"
 version = "0.1.0"
-authors = [
-    "Anatol Ulrich <anatol.ulrich@ferrous-systems.com>",
-    "Sergio Gasquez <sergio.gasquez@gmail.com>",
-]
+authors = ["Michael Morgan <morgan.mike55@gmail.com>"]
 edition = "2021"
 
 [dependencies]
 anyhow = "=1.0.95"
+esp-idf-sys = "0.36.1"
+heapless = "0.7"
 
 [build-dependencies]
 anyhow = "=1.0.95"
-uuid   = { version = "=1.9.1", features = ["v4"] }
+uuid = { version = "=1.9.1", features = ["v4"] }
