@@ -15,7 +15,6 @@ use esp_idf_svc::{
     nvs::EspNvs,
 };
 use log::info;
-use mqtt_messages::Telemetry;
 use serde_json;
 use std::{thread::sleep, time::Duration};
 use wifi::wifi;
