@@ -1,29 +1,31 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>MQTT Dashboard</title>
-</head>
-<body>
-    <h1>Live MQTT Data</h1>
+{% extends 'base.html' %}
 
-    <div id="top">Top: <span>Loading...</span></div>
-    <div id="middle">Middle: <span>Loading...</span></div>
-    <div id="lower">Lower: <span>Loading...</span></div>
+{% block header %}
+  <h1>{% block title %}Live Data{% endblock%}</h1>
+{% endblock %}
 
-    <script>
-        const source = new EventSource("/stream");
+{% block content %}
+  <body>
+    <h1 class="text-2xl font-bold text-blue-600 mb-4">Live MQTT Data</h1>
+    <div class="p-4 bg-gray-100 rounded shadow">
+      <div id="top">Top: <span class="font-mono text-sm">Loading...</span></div>
+      <div id="middle">Middle: <span class="font-mono text-sm">Loading...</span></div>
+      <div id="lower">Lower: <span class="font-mono text-sm">Loading...</span></div>
+    </div>
+      <script>
+          const source = new EventSource("/stream");
 
-        source.onmessage = function(event) {
-            const data = JSON.parse(event.data);
-            document.querySelector("#top span").textContent = data.top;
-            document.querySelector("#middle span").textContent = data.middle;
-            document.querySelector("#lower span").textContent = data.lower;
-        };
+          source.onmessage = function(event) {
+              const data = JSON.parse(event.data);
+              document.querySelector("#top span").textContent = data.top;
+              document.querySelector("#middle span").textContent = data.middle;
+              document.querySelector("#lower span").textContent = data.lower;
+          };
 
-        source.onerror = function(error) {
-            console.error("EventSource failed:", error);
-        };
-    </script>
-</body>
-</html>
+          source.onerror = function(error) {
+              console.error("EventSource failed:", error);
+          };
+      </script>
+  </body>
+{% endblock %}
 

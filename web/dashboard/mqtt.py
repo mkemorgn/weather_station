@@ -14,10 +14,10 @@ class MQTTDevice:
         self.client.connect(broker_host, broker_port, 60)
         self.client.loop_start()
 
-    def on_connect(self, client, userdata, flags, rc):
+    def on_connect(self, client, _userdata, _flags, _rc):
         client.subscribe(self.topic)
 
-    def on_message(self, client, userdata, msg):
+    def on_message(self, _client, _userdata, msg):
         self.latest_payload = msg.payload.decode()
         if self.socketio:
             self.socketio.emit("mqtt_data", {

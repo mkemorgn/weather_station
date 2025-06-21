@@ -1,0 +1,13 @@
+<!doctype html>
+<title>{% block title %}{% endblock %}MQTT Dashboard</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<script src="https://cdn.tailwindcss.com"></script>
+<nav>
+</nav>
+<section class="content">
+  <header>
+    {% block header %}{% endblock %}
+  </header>
+  {% block content %}{% endblock %}
+</section>
+
