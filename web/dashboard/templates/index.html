@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>MQTT Dashboard</title>
+</head>
+<body>
+    <h1>Live MQTT Data</h1>
+
+    <div id="top">Top: <span>Loading...</span></div>
+    <div id="middle">Middle: <span>Loading...</span></div>
+    <div id="lower">Lower: <span>Loading...</span></div>
+
+    <script>
+        const source = new EventSource("/stream");
+
+        source.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+            document.querySelector("#top span").textContent = data.top;
+            document.querySelector("#middle span").textContent = data.middle;
+            document.querySelector("#lower span").textContent = data.lower;
+        };
+
+        source.onerror = function(error) {
+            console.error("EventSource failed:", error);
+        };
+    </script>
+</body>
+</html>
+
