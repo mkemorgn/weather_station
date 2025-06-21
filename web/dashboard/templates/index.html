@@ -1,16 +1,13 @@
 {% extends 'base.html' %}
 
-{% block header %}
-  <h1>{% block title %}Live Data{% endblock%}</h1>
-{% endblock %}
 
 {% block content %}
   <body>
     <h1 class="text-2xl font-bold text-blue-600 mb-4">Live MQTT Data</h1>
     <div class="p-4 bg-gray-100 rounded shadow">
-      <div id="top">Top: <span class="font-mono text-sm">Loading...</span></div>
-      <div id="middle">Middle: <span class="font-mono text-sm">Loading...</span></div>
-      <div id="lower">Lower: <span class="font-mono text-sm">Loading...</span></div>
+      <div id="top">Upstairs: <span class="font-mono text-sm">Loading...</span></div>
+      <div id="middle">Living Room: <span class="font-mono text-sm">Loading...</span></div>
+      <div id="lower">Laundry Room: <span class="font-mono text-sm">Loading...</span></div>
     </div>
       <script>
           const source = new EventSource("/stream");

@@ -1,5 +1,6 @@
 # your_app/mqtt.py
 import paho.mqtt.client as mqtt
+import json
 
 
 class MQTTDevice:
@@ -18,7 +19,22 @@ class MQTTDevice:
         client.subscribe(self.topic)
 
     def on_message(self, _client, _userdata, msg):
-        self.latest_payload = msg.payload.decode()
+        try:
+            raw = msg.payload.decode()
+            parsed = json.loads(raw)
+
+            temp_c = parsed.get("temperature")
+            humidity = parsed.get("humidity")
+
+            if temp_c is not None and humidity is not None:
+                temp_f = (temp_c * 9/5) + 32
+                self.latest_payload = f"{temp_f:.1f}°F / {humidity:.1f}%"
+            else:
+                self.latest_payload = raw  # fallback if unexpected format
+        except Exception as e:
+            print(f"[{self.name}] Error parsing message: {e}")
+            self.latest_payload = msg.payload.decode()
+
         if self.socketio:
             self.socketio.emit("mqtt_data", {
                 "device": self.name,
