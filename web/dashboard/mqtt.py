@@ -1,10 +1,12 @@
-# your_app/mqtt.py
 import paho.mqtt.client as mqtt
 import json
+from dashboard.db import get_db
+from flask import current_app
+from datetime import datetime
 
 
 class MQTTDevice:
-    def __init__(self, name, topic, socketio=None, broker_host="test.mosquitto.org", broker_port=1883):
+    def __init__(self, name, topic, app, socketio=None, broker_host="test.mosquitto.org", broker_port=1883):
         self.name = name
         self.topic = topic
         self.socketio = socketio
@@ -14,25 +16,34 @@ class MQTTDevice:
         self.client.on_message = self.on_message
         self.client.connect(broker_host, broker_port, 60)
         self.client.loop_start()
+        self.app = app
 
     def on_connect(self, client, _userdata, _flags, _rc):
         client.subscribe(self.topic)
 
-    def on_message(self, _client, _userdata, msg):
+    def on_message(self, client, userdata, msg):
         try:
             raw = msg.payload.decode()
             parsed = json.loads(raw)
-
             temp_c = parsed.get("temperature")
             humidity = parsed.get("humidity")
 
             if temp_c is not None and humidity is not None:
                 temp_f = (temp_c * 9/5) + 32
                 self.latest_payload = f"{temp_f:.1f}°F / {humidity:.1f}%"
+
+                # Insert into DB
+                with self.app.app_context():
+                    db = get_db()
+                    db.execute(
+                        "INSERT INTO sensor_readings (device, topic, temperature, humidity, timestamp) VALUES (?, ?, ?, ?, ?)",
+                        (self.name, msg.topic, temp_f, humidity, datetime.utcnow())
+                    )
+                    db.commit()
             else:
-                self.latest_payload = raw  # fallback if unexpected format
+                self.latest_payload = raw
         except Exception as e:
-            print(f"[{self.name}] Error parsing message: {e}")
+            print(f"[{self.name}] Error parsing/saving: {e}")
             self.latest_payload = msg.payload.decode()
 
         if self.socketio:

@@ -7,12 +7,20 @@ def create_app(test_config=None):
     # create and configure the app
     app = Flask(__name__, instance_relative_config=True)
 
-    from . import dashboard
+    from . import dashboard, db
     app.register_blueprint(dashboard.bp)
+    db.init_app(app)
+
+    from .mqtt import MQTTDevice
+    app.devices = {
+    "top": MQTTDevice("upstairs", topic="D8132A722354/sensor_data", app=app),
+    "middle": MQTTDevice("middle", topic="C4DEE25BA558/sensor_data", app=app),
+    "lower": MQTTDevice("lower", topic="C82E1826BC40/sensor_data", app=app),
+    }
 
     app.config.from_mapping(
         SECRET_KEY='dev',
-        DATABASE=os.path.join(app.instance_path, 'flaskr.sqlite'),
+        DATABASE=os.path.join(app.instance_path, 'dashboard.sqlite'),
     )
 
     if test_config is None:
