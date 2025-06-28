@@ -31,6 +31,7 @@ class MQTTDevice:
             if temp_c is not None and humidity is not None:
                 temp_f = self.format_temp(temp_c)
                 current_time = datetime.now()
+                self.latest_payload = f"{temp_f:.1f}°F / {humidity:.1f}%"
 
                 if self.last_saved is None or (current_time - self.last_saved) >= timedelta(minutes=30):
                     # Insert into DB
