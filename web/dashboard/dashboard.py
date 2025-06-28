@@ -1,5 +1,3 @@
-# dashboard.py
-
 from flask import Blueprint, jsonify, render_template, Response, stream_with_context, current_app
 import time, json
 

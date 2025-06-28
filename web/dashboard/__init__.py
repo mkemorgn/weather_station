@@ -7,15 +7,17 @@ def create_app(test_config=None):
     # create and configure the app
     app = Flask(__name__, instance_relative_config=True)
 
-    from . import dashboard, db
-    app.register_blueprint(dashboard.bp)
+    from . import dashboard, db, history
     db.init_app(app)
+    app.register_blueprint(dashboard.bp)
+    app.register_blueprint(history.bp)
+
 
     from .mqtt import MQTTDevice
     app.devices = {
-    "top": MQTTDevice("upstairs", topic="D8132A722354/sensor_data", app=app),
-    "middle": MQTTDevice("middle", topic="C4DEE25BA558/sensor_data", app=app),
-    "lower": MQTTDevice("lower", topic="C82E1826BC40/sensor_data", app=app),
+        "top": MQTTDevice("upstairs", topic="D8132A722354/sensor_data", app=app),
+        "middle": MQTTDevice("middle", topic="C4DEE25BA558/sensor_data", app=app),
+        "lower": MQTTDevice("lower", topic="C82E1826BC40/sensor_data", app=app),
     }
 
     app.config.from_mapping(

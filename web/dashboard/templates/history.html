@@ -1,0 +1,28 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h2 class="text-xl font-bold mb-4">Sensor Reading History</h2>
+<table class="table-auto border-collapse border border-gray-300">
+    <thead>
+        <tr>
+            <th class="border px-4 py-2">Device</th>
+            <th class="border px-4 py-2">Topic</th>
+            <th class="border px-4 py-2">Temperature (°F)</th>
+            <th class="border px-4 py-2">Humidity (%)</th>
+            <th class="border px-4 py-2">Timestamp (UTC)</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in history %}
+        <tr>
+            <td class="border px-4 py-2">{{ row['device'] }}</td>
+            <td class="border px-4 py-2">{{ row['topic'] }}</td>
+            <td class="border px-4 py-2">{{ row['temperature'] }}</td>
+            <td class="border px-4 py-2">{{ row['humidity'] }}</td>
+            <td class="border px-4 py-2">{{ row['timestamp'] }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}
+

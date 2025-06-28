@@ -1,7 +1,6 @@
 import paho.mqtt.client as mqtt
 import json
 from dashboard.db import get_db
-from flask import current_app
 from datetime import datetime
 
 
