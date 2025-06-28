@@ -1,7 +1,7 @@
 import paho.mqtt.client as mqtt
 import json
 from dashboard.db import get_db
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 class MQTTDevice:
@@ -10,6 +10,7 @@ class MQTTDevice:
         self.topic = topic
         self.socketio = socketio
         self.latest_payload = None
+        self.last_saved = None
         self.client = mqtt.Client(client_id=name)
         self.client.on_connect = self.on_connect
         self.client.on_message = self.on_message
@@ -31,14 +32,17 @@ class MQTTDevice:
                 temp_f = (temp_c * 9/5) + 32
                 self.latest_payload = f"{temp_f:.1f}°F / {humidity:.1f}%"
 
-                # Insert into DB
-                with self.app.app_context():
-                    db = get_db()
-                    db.execute(
-                        "INSERT INTO sensor_readings (device, topic, temperature, humidity, timestamp) VALUES (?, ?, ?, ?, ?)",
-                        (self.name, msg.topic, temp_f, humidity, datetime.utcnow())
-                    )
-                    db.commit()
+                current_time = datetime.utcnow()
+                if self.last_saved is None or (current_time - self.last_saved) >= timedelta(minutes=30):
+                    # Insert into DB
+                    with self.app.app_context():
+                        db = get_db()
+                        db.execute(
+                            "INSERT INTO sensor_readings (device, topic, temperature, humidity, timestamp) VALUES (?, ?, ?, ?, ?)",
+                            (self.name, msg.topic, temp_f, humidity, current_time)
+                        )
+                        db.commit()
+                        self.last_saved = current_time
             else:
                 self.latest_payload = raw
         except Exception as e:
