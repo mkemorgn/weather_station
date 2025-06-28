@@ -17,9 +17,9 @@
         <tr>
             <td class="border px-4 py-2">{{ row['device'] }}</td>
             <td class="border px-4 py-2">{{ row['topic'] }}</td>
-            <td class="border px-4 py-2">{{ row['temperature'] }}</td>
-            <td class="border px-4 py-2">{{ row['humidity'] }}</td>
-            <td class="border px-4 py-2">{{ row['timestamp'] }}</td>
+            <td class="border px-4 py-2">{{ "%.1f"|format(row['temperature']) }}</td>
+            <td class="border px-4 py-2">{{ "%.1f"|format(row['humidity']) }}</td>
+            <td class="border px-4 py-2">{{ row['timestamp'].strftime("%Y-%m-%d %H:%M") }}</td>
         </tr>
         {% endfor %}
     </tbody>

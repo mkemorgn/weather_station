@@ -29,10 +29,9 @@ class MQTTDevice:
             humidity = parsed.get("humidity")
 
             if temp_c is not None and humidity is not None:
-                temp_f = (temp_c * 9/5) + 32
-                self.latest_payload = f"{temp_f:.1f}°F / {humidity:.1f}%"
+                temp_f = self.format_temp(temp_c)
+                current_time = datetime.now()
 
-                current_time = datetime.utcnow()
                 if self.last_saved is None or (current_time - self.last_saved) >= timedelta(minutes=30):
                     # Insert into DB
                     with self.app.app_context():
@@ -58,4 +57,8 @@ class MQTTDevice:
 
     def get_data(self):
         return self.latest_payload or "No data yet"
+
+    def format_temp(self, temp_c):
+        temp_f = (temp_c * 9/5) + 32
+        return temp_f
 
