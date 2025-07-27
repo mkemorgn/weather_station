@@ -89,6 +89,7 @@ fn main() -> Result<()> {
     let mqtt_config = MqttClientConfiguration::default();
 
     // Create MQTT client
+    info!("Connecting to MQTT broker at: {}", broker_url);
     let mut client = EspMqttClient::new_cb(&broker_url, &mqtt_config, move |_message_event| {})?;
 
     // Main loop for reading sensor data and publishing it
