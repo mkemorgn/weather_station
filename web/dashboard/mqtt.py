@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 
 class MQTTDevice:
-    def __init__(self, name, topic, app, socketio=None, broker_host="test.mosquitto.org", broker_port=1883):
+    def __init__(self, name, topic, app, socketio=None, broker_host="10.0.0.44", broker_port=1883):
         self.name = name
         self.topic = topic
         self.socketio = socketio
