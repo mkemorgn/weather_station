@@ -120,15 +120,27 @@ fn main() -> Result<()> {
         let humidity_str = format!("{:.2}", humidity);
 
         // Publish temperature data via MQTT
-        client.enqueue(
+        let res = client.enqueue(
             &mqtt_messages::sensor_data_topic(&uuid),
             QoS::AtLeastOnce,
             false,
             payload.as_bytes(),
-        )?;
+        );
 
-        // Optional: Log the temperature
-        info!("Published temperature: {} °C", temp_str);
-        info!("Published humidity: {}", humidity_str);
+        if let Err(e) = res {
+            info!("Failed to publish to MQTT: {}", e);
+
+            // Check if wifi is still connected
+            if !_wifi.is_connected()? {
+                info!("WiFi connection lost, attempting to reconnect...");
+            }
+
+            // Attempt to recreate the MQTT client if it's a persistent failure
+            info!("Attempting to reconnect MQTT...");
+            client = EspMqttClient::new_cb(&broker_url, &mqtt_config, move |_message_event| {})?;
+        } else {
+            info!("Published temperature: {} °C", temp_str);
+            info!("Published humidity: {}", humidity_str);
+        }
     }
 }
