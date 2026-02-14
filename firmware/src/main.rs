@@ -77,16 +77,15 @@ fn main() -> Result<()> {
     }
 
     // MQTT broker configuration
-    let broker_url = if !app_config.mqtt_user.is_empty() {
-        format!(
-            "mqtt://{}:{}@{}",
-            app_config.mqtt_user, app_config.mqtt_pass, app_config.mqtt_host
-        )
-    } else {
-        format!("mqtt://{}", app_config.mqtt_host)
-    };
+    let broker_url = format!("mqtt://{}", app_config.mqtt_host);
 
-    let mqtt_config = MqttClientConfiguration::default();
+    let mut mqtt_config = MqttClientConfiguration::default();
+    if !app_config.mqtt_user.is_empty() {
+        mqtt_config.username = Some(app_config.mqtt_user);
+    }
+    if !app_config.mqtt_pass.is_empty() {
+        mqtt_config.password = Some(app_config.mqtt_pass);
+    }
 
     // Create MQTT client
     info!("Connecting to MQTT broker at: {}", broker_url);
