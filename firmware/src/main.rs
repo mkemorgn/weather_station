@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use bme280::i2c::BME280;
 use embedded_svc::mqtt::client::QoS;
 use esp_idf_svc::nvs::EspNvsPartition;
@@ -16,12 +16,13 @@ use esp_idf_svc::{
     nvs::EspNvs,
 };
 use log::{error, info, warn};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use wifi::wifi;
 
 mod app;
+mod connection;
 use app::{App, MessageBus, TelemetryProvider};
+use connection::ConnectionManager;
 
 #[toml_cfg::toml_config]
 pub struct Config {
@@ -59,7 +60,7 @@ struct MqttBus {
     client: EspMqttClient<'static>,
     broker_url: String,
     config: MqttClientConfiguration<'static>,
-    backoff_secs: Arc<Mutex<u64>>,
+    connection_manager: ConnectionManager,
 }
 
 impl MessageBus for MqttBus {
@@ -71,20 +72,24 @@ impl MessageBus for MqttBus {
         if let Err(e) = res {
             error!("MQTT Publish Error: {}", e);
 
-            let delay_val = *self.backoff_secs.lock().unwrap();
-            if delay_val > 1 {
-                warn!(
-                    "Network might be unstable, waiting {}s before next publish attempt...",
-                    delay_val
-                );
-                std::thread::sleep(Duration::from_secs(delay_val));
-            }
+            self.connection_manager.fail();
+            let delay_val = self.connection_manager.current_backoff();
+            
+            warn!(
+                "Network unstable, waiting {}s before next publish attempt...",
+                delay_val
+            );
+            std::thread::sleep(Duration::from_secs(delay_val));
 
             info!("Attempting to reconnect MQTT...");
-            self.client =
-                EspMqttClient::new_cb(&self.broker_url, &self.config, move |_message_event| {})?;
+            self.client = EspMqttClient::new_cb(&self.broker_url, &self.config, move |_message_event| {})
+                .context("Failed to recreate MQTT client during reconnection")?;
+            
             return Err(e.into());
         }
+
+        // Reset backoff on successful publish
+        self.connection_manager.reset();
         Ok(())
     }
 }
@@ -95,11 +100,15 @@ fn main() -> Result<()> {
     esp_idf_svc::log::EspLogger::initialize_default();
 
     // Initialize NVS
-    let nvs_partition = EspNvsPartition::<NvsDefault>::take();
-    let _nvs = EspNvs::<NvsDefault>::new(nvs_partition?, "wifi", true).unwrap();
+    let nvs_partition = EspNvsPartition::<NvsDefault>::take()
+        .context("Failed to take NVS partition")?;
+    let _nvs = EspNvs::<NvsDefault>::new(nvs_partition, "wifi", true)
+        .context("Failed to initialize NVS")?;
 
-    let peripherals = Peripherals::take().unwrap();
-    let sysloop = EspSystemEventLoop::take()?;
+    let peripherals = Peripherals::take()
+        .context("Failed to take peripherals")?;
+    let sysloop = EspSystemEventLoop::take()
+        .context("Failed to take system event loop")?;
 
     // Use block_on to run our async main logic
     block_on(async_main(peripherals, sysloop))
@@ -115,7 +124,8 @@ async fn async_main(peripherals: Peripherals, sysloop: EspSystemEventLoop) -> Re
         peripherals.modem,
         sysloop.clone(),
     )
-    .await?;
+    .await
+    .context("Wi-Fi connection failed")?;
     info!("Successfully connected to Wi-Fi");
 
     let uuid = get_uuid::uuid().to_string();
@@ -125,7 +135,8 @@ async fn async_main(peripherals: Peripherals, sysloop: EspSystemEventLoop) -> Re
     let sda = peripherals.pins.gpio21;
     let scl = peripherals.pins.gpio22;
     let i2c_config = I2cConfig::new().baudrate(400.kHz().into());
-    let i2c = I2cDriver::new(peripherals.i2c0, sda, scl, &i2c_config)?;
+    let i2c = I2cDriver::new(peripherals.i2c0, sda, scl, &i2c_config)
+        .context("Failed to initialize I2C driver")?;
     let mut bme280 = BME280::new_primary(i2c);
     let mut delay = delay::Ets;
 
@@ -148,25 +159,24 @@ async fn async_main(peripherals: Peripherals, sysloop: EspSystemEventLoop) -> Re
     }
 
     info!("Connecting to MQTT broker at: {}", broker_url);
-    let client = EspMqttClient::new_cb(&broker_url, &mqtt_config, move |_message_event| {})?;
+    let client = EspMqttClient::new_cb(&broker_url, &mqtt_config, move |_message_event| {})
+        .context("Failed to create MQTT client")?;
 
-    // Shared backoff state
-    let backoff_secs = Arc::new(Mutex::new(1u64));
-    let backoff_clone = backoff_secs.clone();
+    // Connection Manager handles the shared backoff state
+    let connection_manager = ConnectionManager::new();
+    let cm_clone = connection_manager.clone();
 
-    // Monitor Wi-Fi state for backoff logic
+    // Monitor Wi-Fi state for proactive recovery
     sysloop.subscribe::<esp_idf_svc::wifi::WifiEvent, _>(move |event| {
         use esp_idf_svc::wifi::WifiEvent;
         match event {
             WifiEvent::StaDisconnected(_) => {
-                let mut delay = backoff_clone.lock().unwrap();
-                warn!("WiFi disconnected. Next retry backoff: {}s", *delay);
-                *delay = std::cmp::min(*delay * 2, 60);
+                warn!("WiFi disconnected event received.");
+                // don't call fail() here because the publish loop will catch the error and apply backoff.
             }
             WifiEvent::StaConnected(_) => {
-                info!("WiFi connected! Resetting backoff.");
-                let mut delay = backoff_clone.lock().unwrap();
-                *delay = 1;
+                info!("WiFi connected event received! Resetting backoff.");
+                cm_clone.reset();
             }
             _ => {}
         }
@@ -176,7 +186,7 @@ async fn async_main(peripherals: Peripherals, sysloop: EspSystemEventLoop) -> Re
         client,
         broker_url,
         config: mqtt_config,
-        backoff_secs,
+        connection_manager,
     };
 
     let mut app = App::new(sensor, bus, uuid);
