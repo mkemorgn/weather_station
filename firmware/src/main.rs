@@ -12,16 +12,19 @@ use esp_idf_svc::{
         prelude::*,
         task::block_on,
     },
-    mqtt::client::{EspMqttClient, MqttClientConfiguration},
+    mqtt::client::{EspMqttClient, MqttClientConfiguration, EventPayload},
+    netif::IpEvent,
     nvs::EspNvs,
+    wifi::{AsyncWifi, EspWifi},
 };
 use log::{error, info, warn};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use wifi::wifi;
 
-mod app;
+mod device;
 mod connection;
-use app::{App, MessageBus, TelemetryProvider};
+use device::{Device, HeartbeatProvider, MessageBus, TelemetryProvider};
 use connection::ConnectionManager;
 
 #[toml_cfg::toml_config]
@@ -56,41 +59,111 @@ impl<'d> TelemetryProvider for Bme280Handler<'d> {
     }
 }
 
+struct HeartbeatHandler {
+    wifi: std::sync::Arc<std::sync::Mutex<esp_idf_svc::wifi::AsyncWifi<esp_idf_svc::wifi::EspWifi<'static>>>>,
+}
+
+impl HeartbeatProvider for HeartbeatHandler {
+    fn read_heartbeat(&self) -> Result<mqtt_messages::Heartbeat> {
+        let rssi = if let Ok(wifi) = self.wifi.lock() {
+            wifi.wifi().get_rssi().unwrap_or(0) as i32
+        } else {
+            0
+        };
+
+        let uptime_secs = unsafe { esp_idf_svc::sys::esp_timer_get_time() as u64 / 1_000_000 };
+        let free_heap = unsafe { esp_idf_svc::sys::esp_get_free_heap_size() };
+
+        Ok(mqtt_messages::Heartbeat {
+            rssi,
+            uptime_secs,
+            free_heap,
+        })
+    }
+}
+
 struct MqttBus {
     client: EspMqttClient<'static>,
     broker_url: String,
     config: MqttClientConfiguration<'static>,
     connection_manager: ConnectionManager,
+    wifi: Arc<Mutex<AsyncWifi<EspWifi<'static>>>>,
+}
+
+impl MqttBus {
+    fn reconnect(&mut self) -> Result<()> {
+        self.connection_manager.fail();
+        let delay_val = self.connection_manager.current_backoff();
+
+        warn!(
+            "Network unstable, waiting {}s before next publish attempt...",
+            delay_val
+        );
+        std::thread::sleep(Duration::from_secs(delay_val));
+
+        // Proactively try to reconnect WiFi if it's down
+        if let Ok(mut wifi) = self.wifi.lock() {
+            if !wifi.is_connected().unwrap_or(false) {
+                info!("WiFi is down. Attempting to reconnect WiFi first...");
+                let _ = block_on(wifi.connect());
+                
+                // Wait up to 10 seconds for IP
+                info!("Waiting for IP layer...");
+                for _ in 0..10 {
+                    if wifi.is_up().unwrap_or(false) {
+                        info!("IP layer is up!");
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_secs(1));
+                }
+            }
+        }
+
+        info!("Attempting to reconnect MQTT...");
+        let cm = self.connection_manager.clone();
+        self.client = EspMqttClient::new_cb(&self.broker_url, &self.config, move |message_event| {
+            match message_event.payload() {
+                EventPayload::Connected(_) => {
+                    info!("MQTT connected event received!");
+                    cm.reset();
+                }
+                EventPayload::Disconnected => {
+                    warn!("MQTT Disconnected event received.");
+                    cm.mark_for_reconnect();
+                }
+                _ => {}
+            }
+        })
+        .context("Failed to recreate MQTT client during reconnection")?;
+
+        Ok(())
+    }
 }
 
 impl MessageBus for MqttBus {
     fn publish(&mut self, topic: &str, payload: &[u8]) -> Result<()> {
+        if self.connection_manager.should_reconnect() {
+            self.reconnect()?;
+        }
+
         let res = self
             .client
             .enqueue(topic, QoS::AtLeastOnce, false, payload);
 
-        if let Err(e) = res {
-            error!("MQTT Publish Error: {}", e);
-
-            self.connection_manager.fail();
-            let delay_val = self.connection_manager.current_backoff();
-            
-            warn!(
-                "Network unstable, waiting {}s before next publish attempt...",
-                delay_val
-            );
-            std::thread::sleep(Duration::from_secs(delay_val));
-
-            info!("Attempting to reconnect MQTT...");
-            self.client = EspMqttClient::new_cb(&self.broker_url, &self.config, move |_message_event| {})
-                .context("Failed to recreate MQTT client during reconnection")?;
-            
-            return Err(e.into());
+        match res {
+            Ok(_) => {
+                // Only reset if we aren't flagged for a background reconnect
+                if !self.connection_manager.should_reconnect() {
+                    self.connection_manager.reset();
+                }
+                Ok(())
+            }
+            Err(e) => {
+                error!("MQTT Publish Error: {}", e);
+                self.reconnect()?;
+                Err(e.into())
+            }
         }
-
-        // Reset backoff on successful publish
-        self.connection_manager.reset();
-        Ok(())
     }
 }
 
@@ -118,7 +191,7 @@ async fn async_main(peripherals: Peripherals, sysloop: EspSystemEventLoop) -> Re
     let app_config = CONFIG;
 
     // Connect to Wi-Fi
-    let _wifi = wifi(
+    let wifi_handle = wifi(
         app_config.wifi_ssid,
         app_config.wifi_psk,
         peripherals.modem,
@@ -127,6 +200,8 @@ async fn async_main(peripherals: Peripherals, sysloop: EspSystemEventLoop) -> Re
     .await
     .context("Wi-Fi connection failed")?;
     info!("Successfully connected to Wi-Fi");
+
+    let wifi = std::sync::Arc::new(std::sync::Mutex::new(wifi_handle));
 
     let uuid = get_uuid::uuid().to_string();
     info!("Our UUID is: {}", uuid);
@@ -148,6 +223,8 @@ async fn async_main(peripherals: Peripherals, sysloop: EspSystemEventLoop) -> Re
         delay,
     };
 
+    let heartbeat = HeartbeatHandler { wifi: wifi.clone() };
+
     // MQTT Configuration
     let broker_url = format!("mqtt://{}", app_config.mqtt_host);
     let mut mqtt_config = MqttClientConfiguration::default();
@@ -158,13 +235,28 @@ async fn async_main(peripherals: Peripherals, sysloop: EspSystemEventLoop) -> Re
         mqtt_config.password = Some(app_config.mqtt_pass);
     }
 
-    info!("Connecting to MQTT broker at: {}", broker_url);
-    let client = EspMqttClient::new_cb(&broker_url, &mqtt_config, move |_message_event| {})
-        .context("Failed to create MQTT client")?;
-
     // Connection Manager handles the shared backoff state
     let connection_manager = ConnectionManager::new();
     let cm_clone = connection_manager.clone();
+    let cm_wifi = connection_manager.clone();
+
+    info!("Connecting to MQTT broker at: {}", broker_url);
+    let client = EspMqttClient::new_cb(&broker_url, &mqtt_config, move |message_event| {
+        match message_event.payload() {
+            EventPayload::Connected(_) => {
+                info!("MQTT connected event received!");
+                cm_clone.reset();
+            }
+            EventPayload::Disconnected => {
+                warn!("MQTT Disconnected event received.");
+                cm_clone.mark_for_reconnect();
+            }
+            _ => {}
+        }
+    })
+    .context("Failed to create MQTT client")?;
+
+    let cm_ip = connection_manager.clone();
 
     // Monitor Wi-Fi state for proactive recovery
     sysloop.subscribe::<esp_idf_svc::wifi::WifiEvent, _>(move |event| {
@@ -172,11 +264,21 @@ async fn async_main(peripherals: Peripherals, sysloop: EspSystemEventLoop) -> Re
         match event {
             WifiEvent::StaDisconnected(_) => {
                 warn!("WiFi disconnected event received.");
-                // don't call fail() here because the publish loop will catch the error and apply backoff.
+                cm_wifi.mark_for_reconnect();
             }
             WifiEvent::StaConnected(_) => {
-                info!("WiFi connected event received! Resetting backoff.");
-                cm_clone.reset();
+                info!("WiFi connected event received!");
+            }
+            _ => {}
+        }
+    })?;
+
+    // Monitor IP state
+    sysloop.subscribe::<IpEvent, _>(move |event| {
+        match event {
+            IpEvent::DhcpIpAssigned(_) => {
+                info!("IP address acquired!");
+                cm_ip.reset();
             }
             _ => {}
         }
@@ -187,8 +289,9 @@ async fn async_main(peripherals: Peripherals, sysloop: EspSystemEventLoop) -> Re
         broker_url,
         config: mqtt_config,
         connection_manager,
+        wifi,
     };
 
-    let mut app = App::new(sensor, bus, uuid);
-    app.run_loop(1000).await
+    let mut device = Device::new(sensor, heartbeat, bus, uuid);
+    device.run_loop(1000, 60000).await
 }

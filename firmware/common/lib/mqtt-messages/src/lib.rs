@@ -12,6 +12,11 @@ pub fn sensor_data_topic(uuid: &str) -> String {
     format!("{}/sensor_data", uuid)
 }
 
+/// Topic for device health metrics
+pub fn heartbeat_topic(uuid: &str) -> String {
+    format!("{}/heartbeat", uuid)
+}
+
 /// Handles `EspMqttMessage` with MQTT hierarchy
 /// Can be used to send ColorData(rgb) with `Command` in a hierarchical context
 pub fn cmd_topic_fragment(uuid: &str) -> String {
@@ -40,6 +45,14 @@ pub struct Telemetry {
     pub temperature: f32,
     pub humidity: f32,
     // extendable with pressure, battery, timestamp, etc.
+}
+
+/// A structured heartbeat packet for observability
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Heartbeat {
+    pub rssi: i32,
+    pub uptime_secs: u64,
+    pub free_heap: u32,
 }
 
 /// A command type for board control (e.g., LEDs)
