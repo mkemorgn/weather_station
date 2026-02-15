@@ -5,11 +5,11 @@ edition = "2021"
 authors = ["Sergio Gasquez <sergio.gasquez@gmail.com>"]
 
 [dependencies]
-anyhow      = "=1.0.95"
-esp-idf-svc = "=0.50.1"
+anyhow      = { workspace = true }
+esp-idf-svc = { workspace = true }
 esp-idf-hal ={ version = "=0.45.0", features = ["rmt-legacy"] }
-log         = "=0.4.22"
-rgb         = "0.8.29"
+log         = { workspace = true }
+rgb         = { workspace = true }
 
 [build-dependencies]
-embuild = "=0.33.0"
+embuild = { workspace = true }
