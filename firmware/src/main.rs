@@ -10,13 +10,14 @@ use esp_idf_svc::{
         i2c::{I2cConfig, I2cDriver},
         peripherals::Peripherals,
         prelude::*,
+        task::block_on,
     },
     mqtt::client::{EspMqttClient, MqttClientConfiguration},
     nvs::EspNvs,
 };
-use log::info;
-use serde_json;
-use std::{thread::sleep, time::Duration};
+use log::{error, info, warn};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use wifi::wifi;
 
 #[toml_cfg::toml_config]
@@ -38,32 +39,34 @@ fn main() -> Result<()> {
     esp_idf_svc::sys::link_patches();
     esp_idf_svc::log::EspLogger::initialize_default();
 
-    // Initialize NVS (necessary for Wi-Fi to work)
+    // Initialize NVS
     let nvs_partition = EspNvsPartition::<NvsDefault>::take();
     let _nvs = EspNvs::<NvsDefault>::new(nvs_partition?, "wifi", true).unwrap();
 
-    // Get peripherals from the ESP32
     let peripherals = Peripherals::take().unwrap();
     let sysloop = EspSystemEventLoop::take()?;
 
-    // Load configuration from TOML file
+    // Use block_on to run our async main logic
+    block_on(async_main(peripherals, sysloop))
+}
+
+async fn async_main(peripherals: Peripherals, sysloop: EspSystemEventLoop) -> Result<()> {
     let app_config = CONFIG;
 
-    // Connect to Wi-Fi network
+    // Connect to Wi-Fi
     let _wifi = wifi(
         app_config.wifi_ssid,
         app_config.wifi_psk,
         peripherals.modem,
-        sysloop,
-    )?;
+        sysloop.clone(),
+    )
+    .await?;
     info!("Successfully connected to Wi-Fi");
 
     let uuid = get_uuid::uuid();
+    info!("Our UUID is: {}", uuid);
 
-    info!("Our UUID is:");
-    info!("{}", uuid);
-
-    // Set up I2C communication for the sensor
+    // Set up I2C
     let sda = peripherals.pins.gpio21;
     let scl = peripherals.pins.gpio22;
     let config = I2cConfig::new().baudrate(400.kHz().into());
@@ -71,14 +74,12 @@ fn main() -> Result<()> {
     let mut bme280 = BME280::new_primary(i2c);
     let mut delay = delay::Ets;
 
-    match bme280.init(&mut delay) {
-        Ok(_) => log::info!("Successfully initialized BME280 device"),
-        Err(_) => log::error!("Failed to initialize BME280 device"),
+    if let Err(e) = bme280.init(&mut delay) {
+        error!("Failed to initialize BME280: {:?}", e);
     }
 
-    // MQTT broker configuration
+    // MQTT Configuration
     let broker_url = format!("mqtt://{}", app_config.mqtt_host);
-
     let mut mqtt_config = MqttClientConfiguration::default();
     if !app_config.mqtt_user.is_empty() {
         mqtt_config.username = Some(app_config.mqtt_user);
@@ -87,39 +88,46 @@ fn main() -> Result<()> {
         mqtt_config.password = Some(app_config.mqtt_pass);
     }
 
-    // Create MQTT client
     info!("Connecting to MQTT broker at: {}", broker_url);
     let mut client = EspMqttClient::new_cb(&broker_url, &mqtt_config, move |_message_event| {})?;
 
-    // Main loop for reading sensor data and publishing it
+    // Shared backoff state
+    let backoff_secs = Arc::new(Mutex::new(1u64));
+    let backoff_clone = backoff_secs.clone();
+
+    // Monitor Wi-Fi state for backoff logic
+    sysloop.subscribe::<esp_idf_svc::wifi::WifiEvent, _>(move |event| {
+        use esp_idf_svc::wifi::WifiEvent;
+        match event {
+            WifiEvent::StaDisconnected(_) => {
+                let mut delay = backoff_clone.lock().unwrap();
+                warn!("WiFi disconnected. Next retry backoff: {}s", *delay);
+                *delay = std::cmp::min(*delay * 2, 60);
+            }
+            WifiEvent::StaConnected(_) => {
+                info!("WiFi connected! Resetting backoff.");
+                let mut delay = backoff_clone.lock().unwrap();
+                *delay = 1;
+            }
+            _ => {}
+        }
+    })?;
+
     loop {
-        // Wait 1 second before reading data again
-        sleep(Duration::from_secs(1));
+        // Simple sleep for readability
+        std::thread::sleep(Duration::from_secs(1));
 
-        // Read temperature from the BME280 sensor
-        let temperature = bme280
-            .measure(&mut delay)
-            .map(|measurement| measurement.temperature)
-            .unwrap_or_else(|_| 0.0);
-
-        let humidity = bme280
-            .measure(&mut delay)
-            .map(|measurement| measurement.humidity)
-            .unwrap_or_else(|_| 0.0);
+        let measurement = bme280.measure(&mut delay);
+        let temperature = measurement.as_ref().map(|m| m.temperature).unwrap_or(0.0);
+        let humidity = measurement.as_ref().map(|m| m.humidity).unwrap_or(0.0);
 
         let data = mqtt_messages::Telemetry {
-            temperature: temperature,
-            humidity: humidity,
+            temperature,
+            humidity,
         };
 
         let payload = serde_json::to_string(&data)?;
 
-        // Convert Temp to a string
-        let temp_str = format!("{:.2}", temperature);
-
-        let humidity_str = format!("{:.2}", humidity);
-
-        // Publish temperature data via MQTT
         let res = client.enqueue(
             &mqtt_messages::sensor_data_topic(&uuid),
             QoS::AtLeastOnce,
@@ -128,19 +136,18 @@ fn main() -> Result<()> {
         );
 
         if let Err(e) = res {
-            info!("Failed to publish to MQTT: {}", e);
-
-            // Check if wifi is still connected
-            if !_wifi.is_connected()? {
-                info!("WiFi connection lost, attempting to reconnect...");
+            error!("MQTT Publish Error: {}", e);
+            
+            let delay = *backoff_secs.lock().unwrap();
+            if delay > 1 {
+                warn!("Network might be unstable, waiting {}s before next publish attempt...", delay);
+                std::thread::sleep(Duration::from_secs(delay));
             }
 
-            // Attempt to recreate the MQTT client if it's a persistent failure
             info!("Attempting to reconnect MQTT...");
             client = EspMqttClient::new_cb(&broker_url, &mqtt_config, move |_message_event| {})?;
         } else {
-            info!("Published temperature: {} °C", temp_str);
-            info!("Published humidity: {}", humidity_str);
+            info!("Published: {:.2}°C, {:.2}% RH", temperature, humidity);
         }
     }
 }
